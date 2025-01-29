@@ -20,7 +20,7 @@ app.use(express.json());
 
 app.use(
   cors({
-    origin: ["http://localhost:3000","https://code-crew-backend.vercel.app"],
+    origin: ["http://localhost:3000","https://code-crew-frontend-n4uc.vercel.app"],
     methods: ["GET", "POST", "PUT", "DELETE", "PATCH"], // Define allowed methods
     credentials: true, // If you're sending cookies or HTTP authentication
     optionsSuccessStatus: 200, // Response status for preflight requests
