@@ -37,6 +37,10 @@ app.use(
   "/problemStatementsUploads",
   express.static(path.join(__dirname, "problemStatementsUploads"))
 );
+app.get("/", (req, res) => {
+  res.send("Welcome to Vercel!");
+});
+
 app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerSpecs));
 app.use("/api/v1/auth", authRoutes);
 app.use("/api/v1/projects", projectInfoRoutes);
