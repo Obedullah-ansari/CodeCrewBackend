@@ -20,7 +20,7 @@ app.use(express.json());
 
 app.use(
   cors({
-    origin: ["http://localhost:3000"],
+    origin: ["http://localhost:3000","https://code-crew-backend.vercel.app"],
     methods: ["GET", "POST", "PUT", "DELETE", "PATCH"], // Define allowed methods
     credentials: true, // If you're sending cookies or HTTP authentication
     optionsSuccessStatus: 200, // Response status for preflight requests
@@ -37,9 +37,7 @@ app.use(
   "/problemStatementsUploads",
   express.static(path.join(__dirname, "problemStatementsUploads"))
 );
-app.get("/", (req, res) => {
-  res.send("Welcome to Vercel!");
-});
+
 
 app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerSpecs));
 app.use("/api/v1/auth", authRoutes);
