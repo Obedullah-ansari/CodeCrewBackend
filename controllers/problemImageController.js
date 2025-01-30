@@ -1,90 +1,97 @@
 const multer = require("multer");
+const cloudinary = require("cloudinary").v2;
 const AppError = require("../utils/appError");
 const catchAsync = require("../utils/catchAsync");
-const userPerformance = require("../models/performanceModal");
-const cloudinary = require("cloudinary").v2;
+const problemStatement = require("./../models/problemStatementModel");
 const dotenv = require("dotenv");
+dotenv.config();
 
-dotenv.config({ path: "../.env" });
-
+// Cloudinary configuration
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
   api_key: process.env.CLOUDINARY_API_KEY,
   api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
-// Use Multer with Cloudinary Storage
-const storage = multer.memoryStorage(); // No local storage, upload directly
-const upload = multer({ storage }).single("image");
+// Multer storage configuration for Cloudinary (using memory storage to send the file buffer)
+const storageTask = multer.memoryStorage();
 
-// Upload Image to Cloudinary
-exports.userImages = catchAsync(async (req, res, next) => {
-  upload(req, res, async (err) => {
+// File filter to allow only images (you can expand this to video or other types as needed)
+const fileFilter = (req, file, cb) => {
+  const allowedTypes = ["image/jpeg", "image/png", "image/gif"];
+
+  if (allowedTypes.includes(file.mimetype)) {
+    cb(null, true);
+  } else {
+    cb(new AppError(`Unsupported file type: ${file.mimetype}`, 400), false);
+  }
+};
+
+// Multer setup for single image upload
+const uploadProblemImage = multer({
+  storage: storageTask,
+  fileFilter,
+}).single("image");
+
+exports.uploadProblemImage = catchAsync(async (req, res, next) => {
+  // Use Multer to handle file upload
+  uploadProblemImage(req, res, async (err) => {
     if (err) {
       console.log(err);
       return next(new AppError("Image upload failed", 500));
     }
 
-    const id = req.user._id;
-    const user = await userPerformance.findOne({ userid: id });
-
-    if (!user) {
-      return next(new AppError("No user found with this ID", 404));
+    // Ensure a file was uploaded
+    if (!req.file) {
+      return next(new AppError("No file uploaded", 400));
     }
 
-    try {
-      const result = await cloudinary.uploader
-        .upload_stream({ folder: "userImages" }, async (error, result) => {
-          if (error) return next(new AppError("Cloudinary upload failed", 500));
+    const { problemid } = req.body;
 
-          await userPerformance.findOneAndUpdate(
-            { userid: id },
-            { $set: { userimage: result.secure_url } },
+    if (!problemid) {
+      return next(new AppError("problemid is required", 400));
+    }
+
+    // Upload the image to Cloudinary
+    try {
+      const uploadResponse = await cloudinary.uploader.upload_stream(
+        { resource_type: "image" }, // Cloudinary detects it as an image
+        async (error, result) => {
+          if (error) {
+            return next(
+              new AppError(`Cloudinary upload error: ${error.message}`, 500)
+            );
+          }
+
+          const imageUrl = result.secure_url; // URL of the uploaded image
+
+          // Check if the problem exists in the database
+          const solution = await problemStatement.findOne({ problemid });
+
+          if (!solution) {
+            return next(new AppError("Problem not found", 404));
+          }
+
+          // Update the problem statement's image URL in the database
+          const updatedSolution = await problemStatement.findOneAndUpdate(
+            { problemid },
+            { problemimage: imageUrl }, // Store the Cloudinary image URL
             { new: true }
           );
 
           res.status(200).json({
-            message: "Image uploaded successfully",
-            imageUrl: result.secure_url, // Return Cloudinary image URL
+            message: "Problem statement image uploaded successfully",
+            updatedSolution,
+            filePath: imageUrl,
           });
-        })
-        .end(req.file.buffer);
-    } catch (uploadErr) {
-      return next(new AppError("Cloudinary upload failed", 500));
-    }
-  });
-});
-
-// Delete Image from Cloudinary
-exports.deleteUserImage = catchAsync(async (req, res, next) => {
-  const id = req.user._id;
-  const user = await userPerformance.findOne({ userid: id });
-
-  if (!user) {
-    return next(new AppError("No user found with this ID", 404));
-  }
-
-  if (!user.userimage) {
-    return next(new AppError("No image found for this user", 404));
-  }
-
-  const publicId = user.userimage.split("/").pop().split(".")[0]; // Extract Cloudinary public ID
-
-  try {
-    const result = await cloudinary.uploader.destroy(`userImages/${publicId}`);
-
-    if (result.result === "ok") {
-      await userPerformance.findOneAndUpdate(
-        { userid: id },
-        { $set: { userimage: "default.jpg" } },
-        { new: true }
+        }
       );
 
-      res.status(200).json({ message: "Image deleted successfully" });
-    } else {
-      return next(new AppError("Cloudinary image deletion failed", 500));
+      req.pipe(uploadResponse); // Pipe the file buffer to Cloudinary
+    } catch (err) {
+      return next(
+        new AppError(`Error uploading to Cloudinary: ${err.message}`, 500)
+      );
     }
-  } catch (err) {
-    return next(new AppError("Image deletion failed", 500));
-  }
+  });
 });
