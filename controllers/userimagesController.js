@@ -1,10 +1,10 @@
 const multer = require("multer");
-const path = require("path");
 const AppError = require("../utils/appError");
 const catchAsync = require("../utils/catchAsync");
 const userPerformance = require("../models/performanceModal");
 const cloudinary = require("cloudinary").v2;
 const dotenv = require("dotenv");
+
 dotenv.config({ path: "../.env" });
 
 cloudinary.config({
@@ -13,20 +13,11 @@ cloudinary.config({
   api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
-const storageTask = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, "userImages");
-  },
-  filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname);
-    cb(null, `user-${Date.now()}${ext}`);
-  },
-});
+// Use Multer with Cloudinary Storage
+const storage = multer.memoryStorage(); // No local storage, upload directly
+const upload = multer({ storage }).single("image");
 
-const upload = multer({
-  storage: storageTask,
-}).single("image");
-
+// Upload Image to Cloudinary
 exports.userImages = catchAsync(async (req, res, next) => {
   upload(req, res, async (err) => {
     if (err) {
@@ -35,37 +26,36 @@ exports.userImages = catchAsync(async (req, res, next) => {
     }
 
     const id = req.user._id;
-
     const user = await userPerformance.findOne({ userid: id });
+
     if (!user) {
       return next(new AppError("No user found with this ID", 404));
     }
 
     try {
-      const result = await cloudinary.uploader.upload(req.file.path, {
-        folder: "userImages",
-      });
-      await userPerformance.findOneAndUpdate(
-        { userid: id },
-        {
-          $set: {
-            userimage: result.secure_url,
-          },
-        },
-        { new: true }
-      );
+      const result = await cloudinary.uploader
+        .upload_stream({ folder: "userImages" }, async (error, result) => {
+          if (error) return next(new AppError("Cloudinary upload failed", 500));
 
-      // Respond with success
-      res.status(200).json({
-        message: "Image uploaded successfully",
-        imageUrl: result.secure_url, // Return the uploaded image URL
-      });
+          await userPerformance.findOneAndUpdate(
+            { userid: id },
+            { $set: { userimage: result.secure_url } },
+            { new: true }
+          );
+
+          res.status(200).json({
+            message: "Image uploaded successfully",
+            imageUrl: result.secure_url, // Return Cloudinary image URL
+          });
+        })
+        .end(req.file.buffer);
     } catch (uploadErr) {
       return next(new AppError("Cloudinary upload failed", 500));
     }
   });
 });
 
+// Delete Image from Cloudinary
 exports.deleteUserImage = catchAsync(async (req, res, next) => {
   const id = req.user._id;
   const user = await userPerformance.findOne({ userid: id });
@@ -78,25 +68,19 @@ exports.deleteUserImage = catchAsync(async (req, res, next) => {
     return next(new AppError("No image found for this user", 404));
   }
 
-  const imagePath = user.userimage.split("upload/")[1];
-
-  const publicId = imagePath.split("/").slice(1).join("/").split(".")[0]; // Removing version and extension
+  const publicId = user.userimage.split("/").pop().split(".")[0]; // Extract Cloudinary public ID
 
   try {
-    // Delete the image from Cloudinary
-    const result = await cloudinary.uploader.destroy(publicId);
+    const result = await cloudinary.uploader.destroy(`userImages/${publicId}`);
+
     if (result.result === "ok") {
       await userPerformance.findOneAndUpdate(
         { userid: id },
-        {
-          $set: { userimage: "default.jpg" },
-        },
+        { $set: { userimage: "default.jpg" } },
         { new: true }
       );
 
-      res.status(200).json({
-        message: "Image deleted successfully",
-      });
+      res.status(200).json({ message: "Image deleted successfully" });
     } else {
       return next(new AppError("Cloudinary image deletion failed", 500));
     }
