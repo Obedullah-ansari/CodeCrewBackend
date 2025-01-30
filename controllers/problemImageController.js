@@ -6,20 +6,16 @@ const problemStatement = require("./../models/problemStatementModel");
 const dotenv = require("dotenv");
 dotenv.config();
 
-// Cloudinary configuration
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
   api_key: process.env.CLOUDINARY_API_KEY,
   api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
-// Multer storage configuration for Cloudinary (using memory storage to send the file buffer)
-const storageTask = multer.memoryStorage();
+const storageTask = multer.memoryStorage(); // Using memory storage
 
-// File filter to allow only images (you can expand this to video or other types as needed)
 const fileFilter = (req, file, cb) => {
   const allowedTypes = ["image/jpeg", "image/png", "image/gif"];
-
   if (allowedTypes.includes(file.mimetype)) {
     cb(null, true);
   } else {
@@ -27,21 +23,18 @@ const fileFilter = (req, file, cb) => {
   }
 };
 
-// Multer setup for single image upload
 const uploadProblemImage = multer({
   storage: storageTask,
   fileFilter,
 }).single("image");
 
 exports.uploadProblemImage = catchAsync(async (req, res, next) => {
-  // Use Multer to handle file upload
   uploadProblemImage(req, res, async (err) => {
     if (err) {
       console.log(err);
       return next(new AppError("Image upload failed", 500));
     }
 
-    // Ensure a file was uploaded
     if (!req.file) {
       return next(new AppError("No file uploaded", 400));
     }
@@ -52,30 +45,34 @@ exports.uploadProblemImage = catchAsync(async (req, res, next) => {
       return next(new AppError("problemid is required", 400));
     }
 
-    // Upload the image to Cloudinary
     try {
-      const uploadResponse = await cloudinary.uploader.upload_stream(
-        { resource_type: "image" }, // Cloudinary detects it as an image
+      // Upload file buffer directly to Cloudinary
+      const uploadStream = cloudinary.uploader.upload_stream(
+        { folder: "Problemimages" },
         async (error, result) => {
           if (error) {
             return next(
-              new AppError(`Cloudinary upload error: ${error.message}`, 500)
+              new AppError(
+                `Error uploading to Cloudinary: ${error.message}`,
+                500
+              )
             );
           }
 
-          const imageUrl = result.secure_url; // URL of the uploaded image
+          // Get Cloudinary URL of the uploaded image
+          const imageUrl = result.secure_url;
 
-          // Check if the problem exists in the database
+          // Check if problem exists in the database
           const solution = await problemStatement.findOne({ problemid });
 
           if (!solution) {
             return next(new AppError("Problem not found", 404));
           }
 
-          // Update the problem statement's image URL in the database
+          // Update the problem statement with the Cloudinary image URL
           const updatedSolution = await problemStatement.findOneAndUpdate(
             { problemid },
-            { problemimage: imageUrl }, // Store the Cloudinary image URL
+            { problemimage: imageUrl }, // Store Cloudinary URL
             { new: true }
           );
 
@@ -87,7 +84,8 @@ exports.uploadProblemImage = catchAsync(async (req, res, next) => {
         }
       );
 
-      req.pipe(uploadResponse); // Pipe the file buffer to Cloudinary
+      // Pipe the file buffer to Cloudinary upload stream
+      uploadStream.end(req.file.buffer); // End the stream with the buffer
     } catch (err) {
       return next(
         new AppError(`Error uploading to Cloudinary: ${err.message}`, 500)
