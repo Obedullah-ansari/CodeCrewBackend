@@ -1,98 +1,112 @@
-const catchAsync = require("../utils/catchAsync");
+const multer = require("multer");
+const cloudinary = require("cloudinary").v2;
+const streamifier = require("streamifier"); // Required for buffer streaming
 const AppError = require("../utils/appError");
-const problemStatement = require("../models/problemStatementModel");
+const catchAsync = require("../utils/catchAsync");
 const codeSolution = require("../models/codeSolutionsModal");
+const dotenv = require("dotenv");
 
+dotenv.config();
 
-
-
-exports.getASolutionfortask = catchAsync(async (req, res, next) => {
-  const { taskId } = req.params;
-
-  const taskSolution = await codeSolution.findOne({
-    "tasks_solution.taskId": taskId,
-  });
-  if (!taskSolution)
-    return next(new AppError("no solution for this task exist"));
-
-  const specificTask = taskSolution.tasks_solution.find(
-    (task) => task.taskId === taskId
-  );
-
-  if (!specificTask) {
-    return next(new AppError("Task not found in the solutions", 404));
-  }
-
-  res.status(200).json({
-    status: "success",
-    specificTask,
-  });
+// Cloudinary config
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
-//creat and update
-exports.createCodeSolution = catchAsync(async (req, res, next) => {
-  const { taskId } = req.params;
-  const { code } = req.body;
+// Multer memory storage for Cloudinary
+const storageTask = multer.memoryStorage();
 
-  const problem = await problemStatement.findOne({
-    "multipletask._id": taskId,
-  });
+const fileFilter = (req, file, cb) => {
+  const allowedTypes = [
+    "image/jpeg",
+    "image/png",
+    "image/gif",
+    "video/mp4",
+    "video/mov",
+    "video/quicktime",
+  ];
 
-  if (!problem) {
-    return next(new AppError("No task exists with this taskId", 404));
-  }
-
-  const projectname = problem.projectname;
-  const problemid = problem.problemid;
-
-  let solutionDoc = await codeSolution.findOne({ projectname, problemid });
-
-  if (!solutionDoc) {
-    // Step 4: If no document exists, create a new one
-    solutionDoc = await codeSolution.create({
-      projectname,
-      problemid,
-      tasks_solution: [
-        {
-          taskId,
-          code: code.map((c) => ({
-            codetype: c.codetype,
-            code: c.code,
-          })),
-        },
-      ],
-    });
+  if (allowedTypes.includes(file.mimetype)) {
+    cb(null, true);
   } else {
-    // Step 5: Update the existing document
-    const taskIndex = solutionDoc.tasks_solution.findIndex(
-      (task) => task.taskId === taskId
-    );
+    cb(new AppError(`Unsupported file type: ${file.mimetype}`, 400), false);
+  }
+};
 
-    if (taskIndex !== -1) {
-      // Update the existing task's code array
-      solutionDoc.tasks_solution[taskIndex].code = code.map((c) => ({
-        codetype: c.codetype,
-        code: c.code,
-      }));
-    } else {
-      // Add a new task entry if taskId doesn't exist
-      solutionDoc.tasks_solution.push({
-        taskId,
-        demoimage :req.body.demoimage,
-        code: code.map((c) => ({
-          codetype: c.codetype,
-          code: c.code,
-        })),
-      });
+const uploadTaskMedia = multer({
+  storage: storageTask,
+  fileFilter,
+}).single("file");
+
+exports.uploadTaskMedia = catchAsync(async (req, res, next) => {
+  uploadTaskMedia(req, res, async (err) => {
+    if (err instanceof multer.MulterError) {
+      return next(new AppError(`Multer error: ${err.message}`, 500));
+    } else if (err) {
+      return next(err);
     }
 
-    // Save the updated document
-    await solutionDoc.save();
-  }
+    if (!req.file) {
+      return next(new AppError("No file uploaded", 400));
+    }
 
-  // Step 6: Respond to the client
-  res.status(201).json({
-    status: "success",
-    solutionDoc,
+    const { problemid, taskid } = req.body;
+    if (!problemid || !taskid) {
+      return next(new AppError("problemid and taskid are required", 400));
+    }
+
+    // Check if the problem and task exist
+    const solution = await codeSolution.findOne({
+      problemid,
+      "tasks_solution.taskId": taskid,
+    });
+
+    if (!solution) {
+      return next(new AppError("Solution or Task not found", 404));
+    }
+
+    try {
+      // Determine Cloudinary resource type
+      const isVideo = req.file.mimetype.startsWith("video");
+
+      const uploadStream = cloudinary.uploader.upload_stream(
+        {
+          folder: "SolutionVideos",
+          resource_type: isVideo ? "video" : "image", // Explicitly set resource type
+        },
+        async (error, cloudinaryResult) => {
+          if (error) {
+            return next(
+              new AppError(`Cloudinary error: ${error.message}`, 500)
+            );
+          }
+
+          // Update database with Cloudinary URL
+          const updatedSolution = await codeSolution.findOneAndUpdate(
+            { problemid, "tasks_solution.taskId": taskid },
+            {
+              $set: {
+                "tasks_solution.$.demoimage": cloudinaryResult.secure_url,
+              },
+            },
+            { new: true }
+          );
+
+          res.status(200).json({
+            message: `File uploaded successfully: ${cloudinaryResult.secure_url}`,
+            updatedSolution,
+          });
+        }
+      );
+
+      // Convert buffer to stream and pipe to Cloudinary
+      streamifier.createReadStream(req.file.buffer).pipe(uploadStream);
+    } catch (err) {
+      return next(
+        new AppError(`Error uploading to Cloudinary: ${err.message}`, 500)
+      );
+    }
   });
 });
