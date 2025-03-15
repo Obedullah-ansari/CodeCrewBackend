@@ -92,7 +92,7 @@ exports.userSolution = catchAsync(async (req, res, next) => {
         },
       ],
     });
-  } else {z
+  } else {
     // Step 3: Update an existing userCode document
     const projectIndex = userCodeDoc.projectProgress.findIndex(
       (project) =>
