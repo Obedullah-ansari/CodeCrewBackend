@@ -185,8 +185,7 @@ exports.updateTaskPerformance = catchAsync(async (req, res, next) => {
 
   if (totalPercentage < 50) {
     return res.status(200).json({
-      message:
-        "Your performance for this task is below the minimum threshold of 50%. Please improve your solution before submitting.",
+      message:"success",
     });
   }
 
