@@ -26,7 +26,11 @@ app.use(
     optionsSuccessStatus: 200, // Response status for preflight requests
   })
 );
+
 app.options("*", cors());
+
+app.set("view engine", "ejs");
+app.set("view", path.join(__dirname, "view"));
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 app.use("/images", express.static(path.join(__dirname, "images")));
 app.use(
